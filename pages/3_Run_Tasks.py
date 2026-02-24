@@ -17,8 +17,8 @@ from core import registry
 from core.runner import run_task
 from core.tasks.utils import get_available_devices, get_tiatoolbox_version, normalize_device_choice
 
-st.set_page_config(page_title="Run Tasks", page_icon="⚙️", layout="wide")
-st.title("⚙️ Run Tasks")
+st.set_page_config(page_title="Run Tasks", page_icon=None, layout="wide")
+st.title("Run Tasks")
 
 # ---------------------------------------------------------------------------
 # File selector
@@ -55,7 +55,7 @@ with col_roi:
                    f"level={current_roi.get('level', 0)}")
     else:
         if entry.is_wsi:
-            st.warning("⚠️ No ROI set for this WSI. Full-slide analysis may be very slow.")
+            st.warning("No ROI set for this WSI. Full-slide analysis may be very slow.")
         else:
             st.info("No ROI set – full image will be analysed.")
 
@@ -153,7 +153,7 @@ if "run_log" not in st.session_state:
 if "last_run_manifest" not in st.session_state:
     st.session_state.last_run_manifest = None
 
-run_btn = st.button("▶️ Run Task", type="primary")
+run_btn = st.button("Run Task", type="primary")
 
 log_placeholder = st.empty()
 status_placeholder = st.empty()
@@ -167,7 +167,7 @@ if run_btn:
     # Warn for full WSI without ROI
     if entry.is_wsi and not current_roi:
         st.warning(
-            "⚠️ You are about to run on the FULL slide without a ROI.  "
+            "You are about to run on the FULL slide without a ROI.  "
             "This may take a very long time.  Proceed with caution."
         )
 
@@ -193,17 +193,17 @@ if run_btn:
             st.session_state.last_run_manifest = manifest
             if manifest.status == "completed":
                 status_placeholder.success(
-                    f"✅ Run **{manifest.run_id[:8]}** completed in {manifest.duration_seconds}s "
+                    f"Run **{manifest.run_id[:8]}** completed in {manifest.duration_seconds}s "
                     f"(device used: {manifest.device_used or manifest.device})"
                 )
                 if manifest.device_fallback_reason:
-                    st.warning(f"⚠️ Device fallback: {manifest.device_fallback_reason}")
+                    st.warning(f"Device fallback: {manifest.device_fallback_reason}")
                 if manifest.warnings:
                     for w in manifest.warnings:
-                        st.warning(f"⚠️ {w}")
+                        st.warning(w)
             else:
                 status_placeholder.error(
-                    f"❌ Run **{manifest.run_id[:8]}** failed: {manifest.error}"
+                    f"Run **{manifest.run_id[:8]}** failed: {manifest.error}"
                 )
         except Exception as exc:
             status_placeholder.error(f"Run failed: {exc}")
@@ -214,7 +214,7 @@ if run_btn:
 # Show last manifest
 if st.session_state.last_run_manifest:
     m = st.session_state.last_run_manifest
-    with st.expander("📋 Run manifest", expanded=True):
+    with st.expander("Run manifest", expanded=True):
         import json
         st.json(m.as_dict())
     st.info("Go to **Results & Downloads** to view outputs and launch the viewer.")

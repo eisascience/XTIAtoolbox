@@ -19,8 +19,8 @@ from core.runner import get_run, list_runs
 from core.viewer_launcher import launch_viewer, viewer_command_string
 from core.viz import load_preview_image, overlay_geojson_on_image, pil_to_bytes
 
-st.set_page_config(page_title="Results & Downloads", page_icon="📊", layout="wide")
-st.title("📊 Results & Downloads")
+st.set_page_config(page_title="Results & Downloads", page_icon=None, layout="wide")
+st.title("Results & Downloads")
 
 # ---------------------------------------------------------------------------
 # Run selector
@@ -53,7 +53,7 @@ out_dir = run_dir / "outputs"
 # ---------------------------------------------------------------------------
 # Manifest details
 # ---------------------------------------------------------------------------
-with st.expander("📋 Run manifest", expanded=False):
+with st.expander("Run manifest", expanded=False):
     st.json(manifest.as_dict())
 
 st.markdown(
@@ -87,14 +87,14 @@ else:
         with col2:
             with open(f, "rb") as fh:
                 st.download_button(
-                    "⬇️ Download",
+                    "Download",
                     data=fh.read(),
                     file_name=f.name,
                     key=f"dl_{f}",
                 )
         with col3:
             if f.suffix in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".npy"):
-                if st.button("👁️ Preview", key=f"prev_{f}"):
+                if st.button("Preview", key=f"prev_{f}"):
                     st.session_state[f"preview_{manifest.run_id}"] = str(f)
 
     # Render preview if requested
@@ -120,7 +120,7 @@ else:
     st.divider()
     zip_bytes = make_run_zip(manifest)
     st.download_button(
-        "⬇️ Download all outputs as ZIP",
+        "Download all outputs as ZIP",
         data=zip_bytes,
         file_name=f"run_{manifest.run_id[:8]}.zip",
         mime="application/zip",
@@ -155,7 +155,7 @@ if geojson_candidates:
 # Launch viewer
 # ---------------------------------------------------------------------------
 st.divider()
-st.header("🚀 Launch TIAToolbox Viewer")
+st.header("Launch TIAToolbox Viewer")
 st.markdown(
     "The TIAToolbox Bokeh viewer provides interactive slide exploration. "
     "It opens at **http://localhost:5006** in your browser."
@@ -164,7 +164,7 @@ st.markdown(
 cmd_str = viewer_command_string(run_dir)
 st.code(cmd_str, language="bash")
 
-if st.button("🚀 Launch Viewer", type="primary"):
+if st.button("Launch Viewer", type="primary"):
     ok, msg = launch_viewer(run_dir)
     if ok:
         st.success(msg)

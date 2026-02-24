@@ -126,6 +126,29 @@ and (when possible) spawns the Bokeh server in a background process.
 
 ## Troubleshooting
 
+### OME-TIFF handling
+
+XTIAtoolbox automatically detects OME-TIFF files (by `.ome.tif` / `.ome.tiff` extension or
+OME-XML magic bytes) and treats them as **regular images**, not WSI.  This means:
+
+- Thumbnails are generated using `tifffile` with automatic axes interpretation, so files with
+  axes `YX` (greyscale), `CYX` / `YXC` (multi-channel), `ZYX` / `ZYXC` / `ZCYX` (Z-stacks) are
+  all handled without raising an "Unsupported axes" error.
+- ROI extraction uses PIL crop (same as other non-WSI images).
+- If you have a **pyramidal OME-TIFF** that is truly a WSI, rename it to `.tif` / `.tiff` and
+  ensure it does **not** contain OME-XML metadata, so it is picked up by the WSI path.
+
+### TIFF thumbnail fallback
+
+For any non-WSI TIFF (including OME-TIFF and multi-channel TIFFs), thumbnails are generated via
+`tifffile`.  The axes conversion rules are:
+
+| Axes   | Conversion                                              |
+|--------|---------------------------------------------------------|
+| YX     | Greyscale repeated to RGB                               |
+| YXC / CYX | First 3 channels mapped to RGB; C=1 treated as greyscale |
+| ZYX / ZYXC / ZCYX | First Z-slice taken, then handled as above   |
+
 ### OpenSlide not found (OME-TIFF / WSI thumbnails and ROI extraction)
 
 When loading `.tif` / `.tiff` / `.svs` / `.ndpi` / `.mrxs` files, XTIAtoolbox uses

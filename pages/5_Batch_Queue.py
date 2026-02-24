@@ -47,8 +47,8 @@ def _save_queue(jobs: list[BatchJob]) -> None:
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
-st.set_page_config(page_title="Batch Queue", page_icon="📋", layout="wide")
-st.title("📋 Batch Queue")
+st.set_page_config(page_title="Batch Queue", page_icon=None, layout="wide")
+st.title("Batch Queue")
 
 TASK_LABELS = {
     "nuclei_detection": "Nuclei Detection (HoVer-Net)",
@@ -112,7 +112,7 @@ else:
         )
         batch_device = normalize_device_choice(batch_device_label)
 
-        submitted = st.form_submit_button("➕ Add to queue")
+        submitted = st.form_submit_button("Add to queue")
         if submitted:
             queue = _load_queue()
             added = 0
@@ -150,11 +150,11 @@ else:
     for i, job in enumerate(queue):
         fname = file_map.get(job.file_id, f"<unknown:{job.file_id[:8]}>")
         status_icon = {
-            "queued": "🕐",
-            "running": "⏳",
-            "completed": "✅",
-            "failed": "❌",
-        }.get(job.status, "❓")
+            "queued": "[queued]",
+            "running": "[running]",
+            "completed": "[done]",
+            "failed": "[failed]",
+        }.get(job.status, "[?]")
 
         col1, col2, col3 = st.columns([4, 1, 1])
         with col1:
@@ -167,12 +167,12 @@ else:
             if job.run_id:
                 st.caption(f"Run ID: {job.run_id[:8]}")
         with col2:
-            if st.button("🗑️ Remove", key=f"rm_job_{job.job_id}"):
+            if st.button("Remove", key=f"rm_job_{job.job_id}"):
                 queue = [j for j in queue if j.job_id != job.job_id]
                 _save_queue(queue)
                 st.rerun()
         with col3:
-            if job.status == "failed" and st.button("↩️ Reset", key=f"reset_{job.job_id}"):
+            if job.status == "failed" and st.button("Reset", key=f"reset_{job.job_id}"):
                 job.status = "queued"
                 job.error = ""
                 _save_queue(queue)
@@ -183,14 +183,14 @@ else:
     # Clear completed jobs
     col_clear, col_run = st.columns(2)
     with col_clear:
-        if st.button("🧹 Clear completed/failed"):
+        if st.button("Clear completed/failed"):
             queue = [j for j in queue if j.status not in ("completed", "failed")]
             _save_queue(queue)
             st.rerun()
 
     # Run all queued jobs
     with col_run:
-        run_all = st.button("▶️ Run all queued jobs", type="primary")
+        run_all = st.button("Run all queued jobs", type="primary")
 
     if run_all:
         queued_jobs = [j for j in queue if j.status == "queued"]

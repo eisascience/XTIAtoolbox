@@ -18,8 +18,8 @@ from core.io import make_thumbnail_with_error
 from core.models import ROI
 from core.viz import pil_to_bytes
 
-st.set_page_config(page_title="Viewer & ROI", page_icon="🗺️", layout="wide")
-st.title("🗺️ Viewer & ROI")
+st.set_page_config(page_title="Viewer & ROI", page_icon=None, layout="wide")
+st.title("Viewer & ROI")
 
 st.info(
     "This page lets you inspect a slide thumbnail and define a **Region of Interest (ROI)** "
@@ -63,9 +63,9 @@ else:
         st.markdown(f"**File:** `{entry.original_name}`")
         st.markdown(f"**Type:** {'WSI' if entry.is_wsi else 'image'}")
         if entry.width and entry.height:
-            st.markdown(f"**Full dimensions:** {entry.width} × {entry.height} px")
+            st.markdown(f"**Full dimensions:** {entry.width} x {entry.height} px")
         if entry.mpp:
-            st.markdown(f"**Resolution:** {entry.mpp} µm/px")
+            st.markdown(f"**Resolution:** {entry.mpp} um/px")
 
 # ---------------------------------------------------------------------------
 # ROI definition
@@ -74,7 +74,7 @@ st.subheader("Define Region of Interest (ROI)")
 
 if entry.is_wsi:
     st.warning(
-        "⚠️ This is a large WSI.  Running tasks on the full slide may take a long time and "
+        "This is a large WSI.  Running tasks on the full slide may take a long time and "
         "consume significant memory.  **It is strongly recommended** to set a ROI."
     )
 
@@ -115,13 +115,13 @@ if use_roi:
     area = int(w) * int(h)
     if area > MAX_ROI_AREA_WARNING:
         st.warning(
-            f"⚠️ ROI area is {area:,} px² ({area / 1e6:.1f} Mpx).  "
+            f"ROI area is {area:,} px2 ({area / 1e6:.1f} Mpx).  "
             "This may be slow on CPU – consider reducing the region."
         )
     else:
         st.success(f"ROI area: {area:,} px²")
 
-    if st.button("💾 Save ROI", key=f"save_roi_{entry.file_id}"):
+    if st.button("Save ROI", key=f"save_roi_{entry.file_id}"):
         st.session_state[roi_key] = roi_dict
         st.success(f"ROI saved: x={x}, y={y}, w={w}, h={h}, level={level}")
 else:

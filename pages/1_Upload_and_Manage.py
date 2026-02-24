@@ -17,8 +17,8 @@ from core import registry
 from core.io import delete_upload, make_thumbnail_with_error, save_upload, validate_extension
 from core.viz import pil_to_bytes
 
-st.set_page_config(page_title="Upload & Manage", page_icon="📁", layout="wide")
-st.title("📁 Upload & Manage")
+st.set_page_config(page_title="Upload & Manage", page_icon=None, layout="wide")
+st.title("Upload & Manage")
 
 # ---------------------------------------------------------------------------
 # Upload section
@@ -52,10 +52,10 @@ if uploaded_files:
             entry = save_upload(uf.read(), uf.name)
             registry.add_file(entry)
             st.success(
-                f"✅ Saved **{uf.name}** "
+                f"Saved **{uf.name}** "
                 f"({'WSI' if entry.is_wsi else 'image'}, "
                 f"{entry.size_bytes / 1024:.1f} KB, "
-                f"sha256={entry.sha256[:12]}…)"
+                f"sha256={entry.sha256[:12]}...)"
             )
         except Exception as exc:
             st.error(f"Failed to save {uf.name}: {exc}")
@@ -73,8 +73,8 @@ if not entries:
 else:
     for entry in entries:
         with st.expander(
-            f"{'🔬 WSI' if entry.is_wsi else '🖼 Image'} – **{entry.original_name}**  "
-            f"(ID: {entry.file_id[:8]}…)",
+            f"{'[WSI]' if entry.is_wsi else '[Image]'} – **{entry.original_name}**  "
+            f"(ID: {entry.file_id[:8]}...)",
             expanded=False,
         ):
             col1, col2 = st.columns([1, 2])
@@ -94,11 +94,11 @@ else:
                 st.markdown(f"**Uploaded:** {entry.uploaded_at}")
                 st.markdown(f"**SHA-256:** `{entry.sha256}`")
                 if entry.width and entry.height:
-                    st.markdown(f"**Dimensions:** {entry.width} × {entry.height} px")
+                    st.markdown(f"**Dimensions:** {entry.width} x {entry.height} px")
                 if entry.mpp:
-                    st.markdown(f"**MPP:** {entry.mpp} µm/px")
+                    st.markdown(f"**MPP:** {entry.mpp} um/px")
                 if entry.is_wsi:
-                    st.warning("⚠️ Large WSI detected – use **Viewer & ROI** to set a region before running tasks.")
+                    st.warning("Large WSI detected – use **Viewer & ROI** to set a region before running tasks.")
 
                 # Tag editor
                 tags_str = st.text_input(
@@ -106,13 +106,13 @@ else:
                     value=", ".join(entry.tags),
                     key=f"tags_{entry.file_id}",
                 )
-                if st.button("💾 Save tags", key=f"save_tags_{entry.file_id}"):
+                if st.button("Save tags", key=f"save_tags_{entry.file_id}"):
                     entry.tags = [t.strip() for t in tags_str.split(",") if t.strip()]
                     registry.update_file(entry)
                     st.success("Tags saved.")
 
                 # Delete button
-                if st.button("🗑️ Delete from workspace", key=f"del_{entry.file_id}"):
+                if st.button("Delete from workspace", key=f"del_{entry.file_id}"):
                     delete_upload(entry)
                     registry.remove_file(entry.file_id)
                     st.success(f"Deleted {entry.original_name}.")

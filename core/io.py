@@ -16,6 +16,7 @@ from PIL import Image
 
 from .config import (
     ALL_SUPPORTED_EXTENSIONS,
+    OME_TIFF_MAGIC,
     UPLOADS_DIR,
     WSI_EXTENSIONS,
 )
@@ -32,6 +33,114 @@ logger = logging.getLogger(__name__)
 
 def _is_wsi(path: Path) -> bool:
     return path.suffix.lower() in WSI_EXTENSIONS
+
+
+def _is_ome_tiff(path: Path) -> bool:
+    """Return True if path is an OME-TIFF (by extension or OME-XML magic bytes)."""
+    name = path.name.lower()
+    if name.endswith(".ome.tif") or name.endswith(".ome.tiff"):
+        return True
+    if path.suffix.lower() in (".tif", ".tiff", ".btf"):
+        try:
+            with open(path, "rb") as fh:
+                header = fh.read(4096)
+            return OME_TIFF_MAGIC in header
+        except Exception:
+            pass
+    return False
+
+
+def _axes_to_rgb(data: np.ndarray, axes: str) -> np.ndarray:
+    """Convert a numpy array with the given axes string to an RGB uint8 array.
+
+    Supported axes (case-insensitive): YX, CYX, YXC, ZYX, ZYXC, ZCYX.
+    T (time) and any leading singleton dimensions are stripped first.
+    """
+    axes = axes.upper()
+
+    # Strip T axis – take the first frame
+    while "T" in axes:
+        idx = axes.index("T")
+        data = np.take(data, 0, axis=idx)
+        axes = axes[:idx] + axes[idx + 1:]
+
+    # Strip Z axis – take the first slice
+    while "Z" in axes:
+        idx = axes.index("Z")
+        data = np.take(data, 0, axis=idx)
+        axes = axes[:idx] + axes[idx + 1:]
+
+    # Now axes should reduce to one of: YX, YXC, CYX (or YXS, SYX)
+    if axes in ("YX",):
+        rgb = np.stack([data, data, data], axis=-1)
+    elif axes in ("YXC", "YXS"):
+        c = data.shape[2]
+        if c == 1:
+            ch = data[..., 0]
+            rgb = np.stack([ch, ch, ch], axis=-1)
+        elif c >= 3:
+            rgb = data[..., :3]
+        else:
+            rgb = np.stack([data[..., 0]] * 3, axis=-1)
+    elif axes in ("CYX", "SYX"):
+        c = data.shape[0]
+        if c == 1:
+            ch = data[0]
+            rgb = np.stack([ch, ch, ch], axis=-1)
+        elif c >= 3:
+            rgb = np.stack([data[0], data[1], data[2]], axis=-1)
+        else:
+            rgb = np.stack([data[0]] * 3, axis=-1)
+    else:
+        # Unknown axes: squeeze singletons and guess
+        data = np.squeeze(data)
+        if data.ndim == 2:
+            rgb = np.stack([data, data, data], axis=-1)
+        elif data.ndim == 3 and data.shape[2] in (3, 4):
+            rgb = data[..., :3]
+        elif data.ndim == 3 and data.shape[0] in (3, 4):
+            rgb = np.stack([data[0], data[1], data[2]], axis=-1)
+        else:
+            rgb = np.zeros((*data.shape[:2], 3), dtype=np.uint8)
+
+    rgb = np.asarray(rgb)
+    if rgb.dtype != np.uint8:
+        rmin, rmax = float(rgb.min()), float(rgb.max())
+        if rmax > rmin:
+            rgb = ((rgb.astype(np.float32) - rmin) / (rmax - rmin) * 255).astype(np.uint8)
+        else:
+            rgb = np.zeros(rgb.shape, dtype=np.uint8)
+    return rgb
+
+
+def _tiff_to_rgb(path: Path) -> np.ndarray:
+    """Read a TIFF/OME-TIFF file and return an RGB uint8 numpy array.
+
+    Uses tifffile to read the data and interprets the axes metadata so that
+    multi-channel, Z-stack, or greyscale TIFFs are all returned as RGB.
+    """
+    import tifffile  # type: ignore
+
+    with tifffile.TiffFile(str(path)) as tif:
+        if tif.series:
+            series = tif.series[0]
+            axes = series.axes.upper()
+            data = series.asarray()
+        else:
+            data = tif.asarray()
+            # Guess axes from shape
+            ndim = data.ndim
+            if ndim == 2:
+                axes = "YX"
+            elif ndim == 3 and data.shape[2] in (1, 3, 4):
+                axes = "YXC"
+            elif ndim == 3:
+                axes = "CYX"
+            elif ndim == 4:
+                axes = "ZYXC"
+            else:
+                axes = "YX"
+    return _axes_to_rgb(data, axes)
 
 
 def _probe_image(path: Path) -> tuple[int, int, float]:
@@ -82,7 +191,8 @@ def save_upload(file_bytes: bytes, original_name: str) -> FileEntry:
 
     sha = sha256_file(dest_path)
     suffix = Path(original_name).suffix.lower()
-    is_wsi = suffix in WSI_EXTENSIONS
+    # OME-TIFF files are treated as regular images unless proven pyramidal/WSI.
+    is_wsi = suffix in WSI_EXTENSIONS and not _is_ome_tiff(dest_path)
 
     if is_wsi:
         w, h, mpp = _probe_wsi(dest_path)
@@ -120,6 +230,14 @@ def make_thumbnail_with_error(
             thumb = reader.slide_thumbnail(resolution=1.25, units="power")
             reader.close()
             img = Image.fromarray(thumb)
+        elif path.suffix.lower() in (".tif", ".tiff", ".btf"):
+            # Use tifffile for TIFF/OME-TIFF to handle multi-channel and
+            # multi-axis data that PIL cannot decode without axes context.
+            try:
+                arr = _tiff_to_rgb(path)
+                img = Image.fromarray(arr)
+            except Exception:
+                img = Image.open(path).convert("RGB")
         else:
             img = Image.open(path).convert("RGB")
         img.thumbnail((max_size, max_size), Image.LANCZOS)
