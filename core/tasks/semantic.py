@@ -12,6 +12,7 @@ from typing import Any
 import numpy as np
 
 from ..models import FileEntry
+from ..openslide_utils import format_roi_error
 from .utils import ensure_output_dir, get_device, resolve_task_device, roi_to_bounds
 
 logger = logging.getLogger(__name__)
@@ -55,11 +56,11 @@ def run_semantic_segmentation(
 
     if bounds is not None and entry.is_wsi:
         log_fn(f"Extracting ROI {bounds} from WSI for segmentation …")
-        input_path = _extract_roi(entry, bounds, out_dir)
+        input_path, roi_err = _extract_roi(entry, bounds, out_dir)
         if input_path is None:
             return {
                 "status": "failed",
-                "error": "ROI extraction failed",
+                "error": roi_err or "ROI extraction failed",
                 "mask_path": None, "overlay_path": None,
                 "device_used": device_used, "device_fallback_reason": fallback_reason,
                 "warnings": run_warnings,
@@ -130,7 +131,8 @@ def run_semantic_segmentation(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _extract_roi(entry: FileEntry, bounds: tuple[int, int, int, int], out_dir: Path) -> Path | None:
+def _extract_roi(entry: FileEntry, bounds: tuple[int, int, int, int], out_dir: Path) -> tuple[Path | None, str]:
+    """Extract ROI from WSI and save as PNG.  Returns (path, error_str)."""
     try:
         from tiatoolbox.wsicore.wsireader import WSIReader  # type: ignore
         reader = WSIReader.open(entry.stored_path)
@@ -140,10 +142,11 @@ def _extract_roi(entry: FileEntry, bounds: tuple[int, int, int, int], out_dir: P
         img = Image.fromarray(region[..., :3])
         roi_path = out_dir / "roi_seg_input.png"
         img.save(roi_path)
-        return roi_path
+        return roi_path, ""
     except Exception as exc:
-        logger.error("ROI extraction error: %s", exc)
-        return None
+        exc_str = str(exc)
+        logger.error("ROI extraction error: %s", exc_str)
+        return None, format_roi_error(exc_str)
 
 
 def _collect_seg_outputs(

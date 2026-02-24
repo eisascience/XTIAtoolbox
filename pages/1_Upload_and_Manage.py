@@ -14,7 +14,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from core import registry
-from core.io import delete_upload, make_thumbnail, save_upload, validate_extension
+from core.io import delete_upload, make_thumbnail_with_error, save_upload, validate_extension
 from core.viz import pil_to_bytes
 
 st.set_page_config(page_title="Upload & Manage", page_icon="📁", layout="wide")
@@ -80,11 +80,11 @@ else:
             col1, col2 = st.columns([1, 2])
 
             with col1:
-                thumb = make_thumbnail(entry, max_size=256)
+                thumb, thumb_err = make_thumbnail_with_error(entry, max_size=256)
                 if thumb is not None:
                     st.image(pil_to_bytes(thumb), caption="Thumbnail", use_container_width=True)
                 else:
-                    st.write("*(thumbnail unavailable)*")
+                    st.warning(thumb_err or "Thumbnail unavailable.")
 
             with col2:
                 st.markdown(f"**File ID:** `{entry.file_id}`")

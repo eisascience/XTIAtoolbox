@@ -14,7 +14,7 @@ if str(_HERE) not in sys.path:
 
 from core import registry
 from core.config import MAX_ROI_AREA_WARNING
-from core.io import make_thumbnail
+from core.io import make_thumbnail_with_error
 from core.models import ROI
 from core.viz import pil_to_bytes
 
@@ -51,10 +51,10 @@ st.session_state["active_file_id"] = entry.file_id
 # ---------------------------------------------------------------------------
 st.subheader(f"Thumbnail – {entry.original_name}")
 with st.spinner("Generating thumbnail …"):
-    thumb = make_thumbnail(entry, max_size=600)
+    thumb, thumb_err = make_thumbnail_with_error(entry, max_size=600)
 
 if thumb is None:
-    st.error("Could not generate thumbnail for this file.")
+    st.error(thumb_err or "Could not generate thumbnail for this file.")
 else:
     col_img, col_info = st.columns([2, 1])
     with col_img:
