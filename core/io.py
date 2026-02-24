@@ -21,6 +21,7 @@ from .config import (
 )
 from .hashing import sha256_file
 from .models import FileEntry
+from .openslide_utils import openslide_error_hint
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +103,15 @@ def save_upload(file_bytes: bytes, original_name: str) -> FileEntry:
     )
 
 
-def make_thumbnail(entry: FileEntry, max_size: int = 512) -> Image.Image | None:
-    """Return a PIL thumbnail for display, or None on failure."""
+def make_thumbnail_with_error(
+    entry: FileEntry, max_size: int = 512
+) -> tuple[Image.Image | None, str | None]:
+    """Return (thumbnail, error_message).
+
+    On success: (PIL Image, None).
+    On failure: (None, human-readable error string).  When OpenSlide is missing
+    the error string contains platform-specific install guidance.
+    """
     path = entry.stored_path
     try:
         if entry.is_wsi:
@@ -115,10 +123,20 @@ def make_thumbnail(entry: FileEntry, max_size: int = 512) -> Image.Image | None:
         else:
             img = Image.open(path).convert("RGB")
         img.thumbnail((max_size, max_size), Image.LANCZOS)
-        return img
+        return img, None
     except Exception as exc:
-        logger.warning("Thumbnail generation failed for %s: %s", path, exc)
-        return None
+        exc_str = str(exc)
+        logger.warning("Thumbnail generation failed for %s: %s", path, exc_str)
+        hint = openslide_error_hint(exc_str)
+        if hint:
+            return None, hint
+        return None, f"Thumbnail generation failed: {exc_str}"
+
+
+def make_thumbnail(entry: FileEntry, max_size: int = 512) -> Image.Image | None:
+    """Return a PIL thumbnail for display, or None on failure."""
+    img, _ = make_thumbnail_with_error(entry, max_size=max_size)
+    return img
 
 
 def read_region(entry: FileEntry, x: int, y: int, width: int, height: int,

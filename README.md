@@ -124,6 +124,44 @@ and (when possible) spawns the Bokeh server in a background process.
 
 ---
 
+## Troubleshooting
+
+### OpenSlide not found (OME-TIFF / WSI thumbnails and ROI extraction)
+
+When loading `.tif` / `.tiff` / `.svs` / `.ndpi` / `.mrxs` files, XTIAtoolbox uses
+[TIAToolbox](https://tia-toolbox.readthedocs.io/) which in turn depends on the
+[OpenSlide](https://openslide.org/) native library.  If the library is missing you
+will see an error similar to:
+
+```
+Couldn't locate OpenSlide dylib. Try `pip install openslide-bin`.
+```
+
+**macOS**
+
+```bash
+brew install openslide
+pip install openslide-python
+```
+
+**Linux (Debian / Ubuntu)**
+
+```bash
+sudo apt-get install openslide-tools libopenslide-dev
+pip install openslide-python
+```
+
+**Cross-platform alternative (no system package manager required)**
+
+```bash
+pip install openslide-bin openslide-python
+```
+
+After installation, restart the Streamlit app.  Thumbnail generation and ROI
+extraction for WSI files should then work as expected.
+
+---
+
 ## License
 
 See repository root `LICENSE` for terms.
