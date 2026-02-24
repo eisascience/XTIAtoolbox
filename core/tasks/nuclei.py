@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from ..models import FileEntry, ROI
-from .utils import ensure_output_dir, get_device, roi_to_bounds
+from .utils import ensure_output_dir, get_device, resolve_task_device, roi_to_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +29,28 @@ def run_nuclei_detection(
     roi: dict[str, Any] | None = None,
     batch_size: int = 4,
     num_workers: int = 0,
+    device: str | None = None,
     on_gpu: bool | None = None,
     log_fn: Any = None,
 ) -> dict[str, Any]:
     """
     Run nuclei instance segmentation and write outputs to *run_dir/outputs/*.
 
-    Returns a dict with keys: geojson_path, csv_path, status, error.
+    Returns a dict with keys: geojson_path, csv_path, status, error,
+    device_used, device_fallback_reason, warnings.
     """
     if log_fn is None:
         log_fn = logger.info
 
-    device = get_device() if on_gpu is None else ("cuda" if on_gpu else "cpu")
+    # Resolve device; ``on_gpu`` kept for backward-compatibility
+    if on_gpu is not None and device is None:
+        device = "cuda" if on_gpu else "cpu"
+    _, tia_on_gpu, device_used, fallback_reason = resolve_task_device(device)
+    run_warnings: list[str] = []
+    if fallback_reason:
+        run_warnings.append(fallback_reason)
+        log_fn(f"WARNING: {fallback_reason}")
+
     out_dir = ensure_output_dir(run_dir)
 
     # ----------------------------------------------------------------
@@ -53,18 +63,28 @@ def run_nuclei_detection(
         log_fn(f"Extracting ROI {bounds} from WSI …")
         input_path = _extract_roi_as_image(entry, bounds, out_dir)
         if input_path is None:
-            return {"status": "failed", "error": "ROI extraction failed", "geojson_path": None, "csv_path": None}
+            return {
+                "status": "failed", "error": "ROI extraction failed",
+                "geojson_path": None, "csv_path": None,
+                "device_used": device_used, "device_fallback_reason": fallback_reason,
+                "warnings": run_warnings,
+            }
 
     # ----------------------------------------------------------------
     # Run NucleusInstanceSegmentor
     # ----------------------------------------------------------------
-    log_fn(f"Running nuclei detection (model={model}, device={device}) …")
+    log_fn(f"Running nuclei detection (model={model}, device={device_used}) …")
     try:
         from tiatoolbox.models.engine.nucleus_instance_segmentor import (  # type: ignore
             NucleusInstanceSegmentor,
         )
     except ImportError as exc:
-        return {"status": "failed", "error": str(exc), "geojson_path": None, "csv_path": None}
+        return {
+            "status": "failed", "error": str(exc),
+            "geojson_path": None, "csv_path": None,
+            "device_used": device_used, "device_fallback_reason": fallback_reason,
+            "warnings": run_warnings,
+        }
 
     with tempfile.TemporaryDirectory() as tmp:
         try:
@@ -77,12 +97,29 @@ def run_nuclei_detection(
             output = segmentor.predict(
                 imgs=[str(input_path)],
                 save_dir=tmp,
-                on_gpu=(device == "cuda"),
+                on_gpu=tia_on_gpu,
                 crash_on_exception=True,
             )
+        except RuntimeError as exc:
+            err_str = str(exc)
+            if device_used != "cpu":
+                # Unexpected runtime failure – record and surface
+                run_warnings.append(f"RuntimeError on {device_used}: {err_str}")
+            logger.exception("NucleusInstanceSegmentor failed")
+            return {
+                "status": "failed", "error": err_str,
+                "geojson_path": None, "csv_path": None,
+                "device_used": device_used, "device_fallback_reason": fallback_reason,
+                "warnings": run_warnings,
+            }
         except Exception as exc:
             logger.exception("NucleusInstanceSegmentor failed")
-            return {"status": "failed", "error": str(exc), "geojson_path": None, "csv_path": None}
+            return {
+                "status": "failed", "error": str(exc),
+                "geojson_path": None, "csv_path": None,
+                "device_used": device_used, "device_fallback_reason": fallback_reason,
+                "warnings": run_warnings,
+            }
 
         # Collect results from tmp
         geojson_path, csv_path = _collect_nuclei_outputs(Path(tmp), out_dir, log_fn)
@@ -93,6 +130,9 @@ def run_nuclei_detection(
         "error": "",
         "geojson_path": str(geojson_path) if geojson_path else None,
         "csv_path": str(csv_path) if csv_path else None,
+        "device_used": device_used,
+        "device_fallback_reason": fallback_reason,
+        "warnings": run_warnings,
     }
 
 

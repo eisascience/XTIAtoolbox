@@ -75,9 +75,13 @@ class RunManifest:
     input_files: list[dict[str, Any]] = field(default_factory=list)  # [{name, sha256, size}]
     roi: dict[str, Any] | None = None
     device: str = "cpu"
+    device_requested: str = ""
+    device_used: str = ""
+    device_fallback_reason: str = ""
     tiatoolbox_version: str = ""
     python_version: str = ""
     outputs: list[str] = field(default_factory=list)   # relative paths under run dir
+    warnings: list[str] = field(default_factory=list)
     status: str = "pending"   # pending | running | completed | failed
     error: str = ""
     duration_seconds: float = 0.0
