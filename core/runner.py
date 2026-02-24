@@ -14,7 +14,7 @@ from .config import RUNS_DIR
 from .hashing import sha256_file
 from .models import FileEntry, RunManifest
 from .tasks import TASK_MAP
-from .tasks.utils import get_device, get_python_version, get_tiatoolbox_version
+from .tasks.utils import get_available_devices, get_device, get_python_version, get_tiatoolbox_version
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ def run_task(
     task_name: str,
     task_params: dict[str, Any],
     roi: dict[str, Any] | None = None,
+    device: str | None = None,
     log_fn: Callable[[str], None] | None = None,
 ) -> RunManifest:
     """
@@ -39,6 +40,9 @@ def run_task(
         Task-specific keyword arguments (model, batch_size, etc.).
     roi : dict | None
         Optional ROI dict {x, y, width, height}.
+    device : str | None
+        Requested compute device: "cpu", "cuda", or "mps".  When None, the
+        best available device is detected automatically.
     log_fn : callable | None
         A callable that accepts a string for UI logging (e.g. st.write).
     """
@@ -52,7 +56,8 @@ def run_task(
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    device = get_device()
+    # Resolve requested device: fall back to best available when not specified.
+    device_requested = device or get_available_devices()[0]
 
     manifest = RunManifest(
         run_id=run_id,
@@ -67,7 +72,8 @@ def run_task(
             }
         ],
         roi=roi,
-        device=device,
+        device=device_requested,
+        device_requested=device_requested,
         tiatoolbox_version=get_tiatoolbox_version(),
         python_version=get_python_version(),
         status="running",
@@ -75,6 +81,7 @@ def run_task(
     _write_manifest(run_dir, manifest)
 
     log_fn(f"[run:{run_id[:8]}] Starting task '{task_name}' on '{entry.original_name}' …")
+    log_fn(f"[run:{run_id[:8]}] Requested device: {device_requested}")
     start = time.monotonic()
 
     try:
@@ -83,6 +90,7 @@ def run_task(
             entry,
             run_dir,
             roi=roi,
+            device=device_requested,
             log_fn=log_fn,
             **task_params,
         )
@@ -90,6 +98,18 @@ def run_task(
         manifest.status = result.get("status", "completed")
         manifest.error = result.get("error", "")
         manifest.duration_seconds = round(elapsed, 2)
+
+        # Record actual device used (may differ from requested if fallback occurred)
+        manifest.device_used = result.get("device_used", device_requested)
+        manifest.device_fallback_reason = result.get("device_fallback_reason", "")
+        manifest.device = manifest.device_used  # keep legacy field consistent
+        manifest.warnings = result.get("warnings", [])
+
+        if manifest.device_fallback_reason:
+            log_fn(
+                f"[run:{run_id[:8]}] Device fallback: {device_requested} → "
+                f"{manifest.device_used} ({manifest.device_fallback_reason})"
+            )
 
         # Record output file paths relative to run_dir
         for key in ("geojson_path", "csv_path", "mask_path", "overlay_path", "patch_csv_path"):

@@ -19,6 +19,7 @@ from core import registry
 from core.config import WORKSPACE_ROOT
 from core.models import BatchJob
 from core.runner import run_task
+from core.tasks.utils import get_available_devices, normalize_device_choice
 
 # ---------------------------------------------------------------------------
 # Persistent batch queue stored in workspace
@@ -95,6 +96,22 @@ else:
 
         use_roi = st.checkbox("Apply saved ROI for each file (if set)", value=True)
 
+        _DEVICE_LABEL_MAP: dict[str, str] = {
+            "cpu": "CPU",
+            "cuda": "CUDA (if available)",
+            "mps": "MPS (Apple Silicon)",
+        }
+        _avail = get_available_devices()
+        _dev_labels = [_DEVICE_LABEL_MAP[d] for d in _avail]
+        batch_device_label = st.selectbox(
+            "Compute device",
+            _dev_labels,
+            index=0,
+            key="batch_device",
+            help="CPU / CUDA / MPS (Apple Silicon) – see README for setup.",
+        )
+        batch_device = normalize_device_choice(batch_device_label)
+
         submitted = st.form_submit_button("➕ Add to queue")
         if submitted:
             queue = _load_queue()
@@ -109,7 +126,8 @@ else:
                 job = BatchJob(
                     file_id=file_entry.file_id,
                     task_name=task_name,
-                    task_params={"model": model, "batch_size": batch_size, "num_workers": 0},
+                    task_params={"model": model, "batch_size": batch_size, "num_workers": 0,
+                                 "device": batch_device},
                     roi=roi_data,
                 )
                 queue.append(job)
@@ -202,11 +220,14 @@ else:
                 _log(f"--- Job {idx + 1}/{len(queued_jobs)}: {file_entry.original_name} / {job.task_name} ---")
 
                 try:
+                    # Extract device from task_params (stored when job was queued)
+                    job_device = job.task_params.pop("device", None)
                     manifest = run_task(
                         entry=file_entry,
                         task_name=job.task_name,
                         task_params=job.task_params,
                         roi=job.roi,
+                        device=job_device,
                         log_fn=_log,
                     )
                     job.status = manifest.status

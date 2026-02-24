@@ -15,7 +15,7 @@ if str(_HERE) not in sys.path:
 
 from core import registry
 from core.runner import run_task
-from core.tasks.utils import get_device, get_tiatoolbox_version
+from core.tasks.utils import get_available_devices, get_tiatoolbox_version, normalize_device_choice
 
 st.set_page_config(page_title="Run Tasks", page_icon="⚙️", layout="wide")
 st.title("⚙️ Run Tasks")
@@ -118,18 +118,29 @@ elif task_name == "patch_prediction":
     task_params["batch_size"] = st.slider("Batch size", 1, 128, 32)
     task_params["num_workers"] = st.slider("DataLoader workers", 0, 8, 0)
 
-# GPU toggle
-device_available = get_device()
-use_gpu = st.checkbox(
-    f"Use GPU (cuda) – {'available ✅' if device_available == 'cuda' else 'not available ❌'}",
-    value=(device_available == "cuda"),
-    disabled=(device_available != "cuda"),
+# Device selection
+_DEVICE_LABEL_MAP: dict[str, str] = {
+    "cpu": "CPU",
+    "cuda": "CUDA (if available)",
+    "mps": "MPS (Apple Silicon)",
+}
+available_devices = get_available_devices()
+device_labels = [_DEVICE_LABEL_MAP[d] for d in available_devices]
+device_label = st.selectbox(
+    "Compute device",
+    device_labels,
+    index=0,
+    help=(
+        "CPU: always available.  "
+        "CUDA: NVIDIA GPU acceleration.  "
+        "MPS: Apple Silicon GPU (M1/M2/M3, macOS 12.3+)."
+    ),
 )
-task_params["on_gpu"] = use_gpu
+selected_device = normalize_device_choice(device_label)
 
 st.caption(
     f"TIAToolbox version: **{get_tiatoolbox_version()}** | "
-    f"Device: **{device_available}**"
+    f"Selected device: **{selected_device}**"
 )
 
 st.divider()
@@ -174,15 +185,22 @@ if run_btn:
             manifest = run_task(
                 entry=entry,
                 task_name=task_name,
-                task_params={k: v for k, v in task_params.items() if k != "on_gpu"},
+                task_params=task_params,
                 roi=current_roi,
+                device=selected_device,
                 log_fn=_log,
             )
             st.session_state.last_run_manifest = manifest
             if manifest.status == "completed":
                 status_placeholder.success(
-                    f"✅ Run **{manifest.run_id[:8]}** completed in {manifest.duration_seconds}s"
+                    f"✅ Run **{manifest.run_id[:8]}** completed in {manifest.duration_seconds}s "
+                    f"(device used: {manifest.device_used or manifest.device})"
                 )
+                if manifest.device_fallback_reason:
+                    st.warning(f"⚠️ Device fallback: {manifest.device_fallback_reason}")
+                if manifest.warnings:
+                    for w in manifest.warnings:
+                        st.warning(f"⚠️ {w}")
             else:
                 status_placeholder.error(
                     f"❌ Run **{manifest.run_id[:8]}** failed: {manifest.error}"

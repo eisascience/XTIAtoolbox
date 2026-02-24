@@ -12,7 +12,7 @@ from typing import Any
 import numpy as np
 
 from ..models import FileEntry
-from .utils import ensure_output_dir, get_device, roi_to_bounds
+from .utils import ensure_output_dir, get_device, resolve_task_device, roi_to_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +27,27 @@ def run_semantic_segmentation(
     roi: dict[str, Any] | None = None,
     batch_size: int = 4,
     num_workers: int = 0,
+    device: str | None = None,
     on_gpu: bool | None = None,
     log_fn: Any = None,
 ) -> dict[str, Any]:
     """
     Run tissue semantic segmentation and write outputs to *run_dir/outputs/*.
 
-    Returns a dict with keys: mask_path, overlay_path, status, error.
+    Returns a dict with keys: mask_path, overlay_path, status, error,
+    device_used, device_fallback_reason, warnings.
     """
     if log_fn is None:
         log_fn = logger.info
 
-    device = get_device() if on_gpu is None else ("cuda" if on_gpu else "cpu")
+    if on_gpu is not None and device is None:
+        device = "cuda" if on_gpu else "cpu"
+    _, tia_on_gpu, device_used, fallback_reason = resolve_task_device(device)
+    run_warnings: list[str] = []
+    if fallback_reason:
+        run_warnings.append(fallback_reason)
+        log_fn(f"WARNING: {fallback_reason}")
+
     out_dir = ensure_output_dir(run_dir)
 
     bounds = roi_to_bounds(roi)
@@ -51,18 +60,24 @@ def run_semantic_segmentation(
             return {
                 "status": "failed",
                 "error": "ROI extraction failed",
-                "mask_path": None,
-                "overlay_path": None,
+                "mask_path": None, "overlay_path": None,
+                "device_used": device_used, "device_fallback_reason": fallback_reason,
+                "warnings": run_warnings,
             }
 
-    log_fn(f"Running semantic segmentation (model={model}, device={device}) …")
+    log_fn(f"Running semantic segmentation (model={model}, device={device_used}) …")
 
     try:
         from tiatoolbox.models.engine.semantic_segmentor import (  # type: ignore
             SemanticSegmentor,
         )
     except ImportError as exc:
-        return {"status": "failed", "error": str(exc), "mask_path": None, "overlay_path": None}
+        return {
+            "status": "failed", "error": str(exc),
+            "mask_path": None, "overlay_path": None,
+            "device_used": device_used, "device_fallback_reason": fallback_reason,
+            "warnings": run_warnings,
+        }
 
     with tempfile.TemporaryDirectory() as tmp:
         try:
@@ -74,13 +89,28 @@ def run_semantic_segmentation(
             output = segmentor.predict(
                 imgs=[str(input_path)],
                 save_dir=tmp,
-                on_gpu=(device == "cuda"),
+                on_gpu=tia_on_gpu,
                 crash_on_exception=True,
                 mode="wsi" if entry.is_wsi else "tile",
             )
+        except RuntimeError as exc:
+            err_str = str(exc)
+            run_warnings.append(f"RuntimeError on {device_used}: {err_str}")
+            logger.exception("SemanticSegmentor failed")
+            return {
+                "status": "failed", "error": err_str,
+                "mask_path": None, "overlay_path": None,
+                "device_used": device_used, "device_fallback_reason": fallback_reason,
+                "warnings": run_warnings,
+            }
         except Exception as exc:
             logger.exception("SemanticSegmentor failed")
-            return {"status": "failed", "error": str(exc), "mask_path": None, "overlay_path": None}
+            return {
+                "status": "failed", "error": str(exc),
+                "mask_path": None, "overlay_path": None,
+                "device_used": device_used, "device_fallback_reason": fallback_reason,
+                "warnings": run_warnings,
+            }
 
         mask_path, overlay_path = _collect_seg_outputs(Path(tmp), out_dir, input_path, log_fn)
 
@@ -90,6 +120,9 @@ def run_semantic_segmentation(
         "error": "",
         "mask_path": str(mask_path) if mask_path else None,
         "overlay_path": str(overlay_path) if overlay_path else None,
+        "device_used": device_used,
+        "device_fallback_reason": fallback_reason,
+        "warnings": run_warnings,
     }
 
 
