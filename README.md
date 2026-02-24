@@ -8,26 +8,6 @@ need to inspect results.
 
 ---
 
-## Migration note (repository restructure)
-
-The application files previously lived inside a nested `tia_streamlit_orchestrator/`
-sub-folder.  They now live **at the repository root**:
-
-```
-XTIAtoolbox/
-  app.py                  <- Streamlit entry point
-  requirements.txt
-  pages/
-  core/
-  workspace/              <- created at first run (not committed)
-```
-
-If you had an existing workspace, it remains at `./workspace` relative to wherever
-you run `streamlit run app.py` from.  No data migration is needed; just run from
-the repository root instead of from inside `tia_streamlit_orchestrator/`.
-
----
-
 ## Features
 
 - **Upload & Manage** - Upload one or many slide files (SVS, NDPI, MRXS, OME-TIFF, PNG, JPEG, TIFF).
