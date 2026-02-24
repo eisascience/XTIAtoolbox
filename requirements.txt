@@ -8,3 +8,6 @@ geojson>=3.0.0
 tifffile>=2023.1.1
 imagecodecs>=2023.1.1
 matplotlib>=3.7.0
+tiatoolbox==1.6.0
+openslide-python==1.4.1
+openslide-bin
