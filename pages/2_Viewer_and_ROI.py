@@ -13,8 +13,9 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from core import registry
+from core.channel_config import get_channel_percentiles
 from core.config import MAX_ROI_AREA_WARNING
-from core.io import make_thumbnail_with_error
+from core.io import get_channel_info, make_channel_thumbnail, make_thumbnail_with_error
 from core.models import ROI
 from core.viz import pil_to_bytes
 
@@ -47,18 +48,98 @@ entry = next(e for e in entries if e.original_name == selected)
 st.session_state["active_file_id"] = entry.file_id
 
 # ---------------------------------------------------------------------------
-# Thumbnail
+# Channel detection & naming
+# ---------------------------------------------------------------------------
+if "channel_names_by_file" not in st.session_state:
+    st.session_state["channel_names_by_file"] = {}
+
+# Lazily detect channel count if not yet stored in the registry entry
+if entry.channel_count == 0 and not entry.is_wsi:
+    n_ch, default_names = get_channel_info(entry.stored_path)
+    if n_ch > 0:
+        entry.channel_count = n_ch
+        if not entry.channel_names:
+            entry.channel_names = default_names
+        registry.update_file(entry)
+else:
+    n_ch = entry.channel_count if entry.channel_count > 0 else 1
+    default_names = [f"Ch {i}" for i in range(n_ch)]
+
+# Resolve channel names: session state > registry > defaults
+ch_names: list[str] = list(
+    st.session_state["channel_names_by_file"].get(
+        entry.file_id,
+        entry.channel_names if entry.channel_names else default_names,
+    )
+)
+# Ensure list is long enough for every channel
+while len(ch_names) < n_ch:
+    ch_names.append(f"Ch {len(ch_names)}")
+st.session_state["channel_names_by_file"][entry.file_id] = ch_names
+
+# ---------------------------------------------------------------------------
+# Thumbnail + channel controls (for multi-channel TIFF)
 # ---------------------------------------------------------------------------
 st.subheader(f"Thumbnail – {entry.original_name}")
+
+is_multichannel_tiff = (
+    not entry.is_wsi
+    and n_ch > 1
+    and entry.stored_path.suffix.lower() in (".tif", ".tiff", ".btf")
+)
+
+selected_ch = 0
+if is_multichannel_tiff:
+    ch_labels = [f"{i}: {ch_names[i]}" for i in range(n_ch)]
+    selected_ch_label = st.selectbox(
+        "Displayed channel",
+        ch_labels,
+        key=f"disp_ch_{entry.file_id}",
+    )
+    selected_ch = ch_labels.index(selected_ch_label)
+
+    col_rename, col_btn = st.columns([3, 1])
+    with col_rename:
+        new_name = st.text_input(
+            "Rename channel",
+            value=ch_names[selected_ch],
+            key=f"rename_ch_{entry.file_id}_{selected_ch}",
+        )
+    with col_btn:
+        st.markdown("&nbsp;", unsafe_allow_html=True)
+        if st.button("Apply", key=f"apply_name_{entry.file_id}_{selected_ch}"):
+            ch_names[selected_ch] = new_name
+            st.session_state["channel_names_by_file"][entry.file_id] = ch_names
+            entry.channel_names = ch_names
+            registry.update_file(entry)
+            st.success(f"Channel {selected_ch} renamed to '{new_name}'.")
+            st.rerun()
+
+# Generate the thumbnail
 with st.spinner("Generating thumbnail …"):
-    thumb, thumb_err = make_thumbnail_with_error(entry, max_size=600)
+    if is_multichannel_tiff:
+        # Read per-channel percentile settings from channel_configs if available
+        ch_cfgs = st.session_state.get("channel_configs_by_file", {}).get(
+            entry.file_id, {}
+        )
+        low_pct, high_pct = get_channel_percentiles(ch_cfgs, selected_ch)
+        thumb, thumb_err = make_channel_thumbnail(
+            entry, channel_idx=selected_ch, max_size=600,
+            low_pct=low_pct, high_pct=high_pct,
+        )
+    else:
+        thumb, thumb_err = make_thumbnail_with_error(entry, max_size=600)
 
 if thumb is None:
     st.error(thumb_err or "Could not generate thumbnail for this file.")
 else:
     col_img, col_info = st.columns([2, 1])
     with col_img:
-        st.image(pil_to_bytes(thumb), caption="Slide thumbnail (downsampled)", use_container_width=True)
+        caption = (
+            f"Channel {selected_ch}: {ch_names[selected_ch]}" if is_multichannel_tiff
+            else "Slide thumbnail (downsampled)"
+        )
+        st.image(pil_to_bytes(thumb), caption=caption, use_container_width=True)
     with col_info:
         st.markdown(f"**File:** `{entry.original_name}`")
         st.markdown(f"**Type:** {'WSI' if entry.is_wsi else 'image'}")
@@ -66,6 +147,12 @@ else:
             st.markdown(f"**Full dimensions:** {entry.width} x {entry.height} px")
         if entry.mpp:
             st.markdown(f"**Resolution:** {entry.mpp} um/px")
+        if n_ch > 1:
+            st.markdown(f"**Channels:** {n_ch}")
+            names_preview = ", ".join(ch_names[:5])
+            if n_ch > 5:
+                names_preview += f" … (+{n_ch - 5} more)"
+            st.markdown(f"**Channel names:** {names_preview}")
 
 # ---------------------------------------------------------------------------
 # ROI definition
@@ -133,3 +220,4 @@ else:
 current_roi = st.session_state.get(roi_key)
 if current_roi:
     st.caption(f"Current ROI: {current_roi}")
+
