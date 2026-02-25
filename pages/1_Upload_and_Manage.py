@@ -3,6 +3,7 @@ pages/1_Upload_and_Manage.py – upload files and manage the workspace registry.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -14,6 +15,13 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from core import registry
+from core.channel_config import (
+    build_config_json,
+    config_filename,
+    load_config_from_disk,
+    load_config_json,
+    save_config_to_disk,
+)
 from core.io import delete_upload, make_thumbnail_with_error, save_upload, validate_extension
 from core.viz import pil_to_bytes
 
@@ -97,6 +105,14 @@ else:
                     st.markdown(f"**Dimensions:** {entry.width} x {entry.height} px")
                 if entry.mpp:
                     st.markdown(f"**MPP:** {entry.mpp} um/px")
+                if entry.channel_count > 1:
+                    ch_names = (
+                        st.session_state.get("channel_names_by_file", {})
+                        .get(entry.file_id, entry.channel_names)
+                    )
+                    st.markdown(f"**Channels:** {entry.channel_count}")
+                    if ch_names:
+                        st.markdown(f"**Channel names:** {', '.join(ch_names)}")
                 if entry.is_wsi:
                     st.warning("Large WSI detected – use **Viewer & ROI** to set a region before running tasks.")
 
@@ -110,6 +126,89 @@ else:
                     entry.tags = [t.strip() for t in tags_str.split(",") if t.strip()]
                     registry.update_file(entry)
                     st.success("Tags saved.")
+
+                # Channel config JSON – save / load
+                st.divider()
+                st.markdown("**Channel config JSON**")
+
+                # -- Save (download) button --
+                _ch_names_for_save = (
+                    st.session_state.get("channel_names_by_file", {})
+                    .get(entry.file_id, entry.channel_names)
+                    or [f"Ch {i}" for i in range(max(entry.channel_count, 1))]
+                )
+                _ch_configs_for_save = st.session_state.get(
+                    "channel_configs_by_file", {}
+                ).get(entry.file_id, {})
+                _existing_on_disk = load_config_from_disk(
+                    entry.stored_path.parent, entry.original_name
+                )
+                _save_doc = build_config_json(
+                    entry.original_name,
+                    entry.channel_count or len(_ch_names_for_save),
+                    _ch_names_for_save,
+                    _ch_configs_for_save if _ch_configs_for_save else None,
+                    existing_data=_existing_on_disk,
+                )
+                st.download_button(
+                    "💾 Save channel config as JSON",
+                    data=json.dumps(_save_doc, indent=2),
+                    file_name=config_filename(entry.original_name),
+                    mime="application/json",
+                    key=f"dl_cfg_{entry.file_id}",
+                )
+
+                # -- Load (upload) button --
+                uploaded_cfg = st.file_uploader(
+                    "📂 Load channel config from JSON",
+                    type=["json"],
+                    key=f"cfg_upload_{entry.file_id}",
+                    help="Accepts any *.xhisto_channel_config.json produced by this app or a compatible tool.",
+                )
+                if uploaded_cfg is not None:
+                    try:
+                        cfg_data = json.loads(uploaded_cfg.read())
+                        orig_fn, cfg_ch_count, cfg_ch_names, cfg_ch_cfgs, _passthrough = (
+                            load_config_json(cfg_data)
+                        )
+                        if orig_fn and orig_fn != entry.original_name:
+                            st.warning(
+                                f"JSON config is for **'{orig_fn}'** but selected file is "
+                                f"**'{entry.original_name}'**. Applying anyway."
+                            )
+                        # Merge channel names (pad or trim to match channel_count)
+                        n_ch = entry.channel_count or cfg_ch_count or len(cfg_ch_names)
+                        while len(cfg_ch_names) < n_ch:
+                            cfg_ch_names.append(f"Ch {len(cfg_ch_names)}")
+                        cfg_ch_names = cfg_ch_names[:n_ch]
+                        # Update registry
+                        if n_ch:
+                            entry.channel_count = n_ch
+                        entry.channel_names = cfg_ch_names
+                        registry.update_file(entry)
+                        # Update session state
+                        st.session_state.setdefault("channel_names_by_file", {})[
+                            entry.file_id
+                        ] = cfg_ch_names
+                        if cfg_ch_cfgs:
+                            st.session_state.setdefault("channel_configs_by_file", {})[
+                                entry.file_id
+                            ] = cfg_ch_cfgs
+                        # Persist JSON to disk alongside the image
+                        save_config_to_disk(
+                            entry.stored_path.parent,
+                            entry.original_name,
+                            entry.channel_count,
+                            cfg_ch_names,
+                            cfg_ch_cfgs if cfg_ch_cfgs else None,
+                            existing_data=cfg_data,
+                        )
+                        st.success(
+                            f"Loaded channel config: {n_ch} channel(s). "
+                            "Go to **Viewer & ROI** to rename channels."
+                        )
+                    except Exception as exc:
+                        st.error(f"Failed to load JSON config: {exc}")
 
                 # Delete button
                 if st.button("Delete from workspace", key=f"del_{entry.file_id}"):

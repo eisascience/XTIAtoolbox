@@ -26,19 +26,24 @@ class FileEntry:
     height: int = 0
     mpp: float = 0.0   # microns per pixel (0 if unknown)
     tags: list[str] = field(default_factory=list)
+    channel_count: int = 0   # 0 = unknown / not yet detected
+    channel_names: list[str] = field(default_factory=list)   # empty = use defaults
 
     def as_dict(self) -> dict[str, Any]:
-        d = self.__dict__.copy()
+        import dataclasses
+        d = {f.name: getattr(self, f.name) for f in dataclasses.fields(self)}
         d["stored_path"] = str(self.stored_path)
         return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "FileEntry":
+        import dataclasses
         d = d.copy()
         d["stored_path"] = Path(d["stored_path"])
         if "tags" not in d:
             d["tags"] = []
-        return cls(**d)
+        known = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in d.items() if k in known})
 
 
 # ---------------------------------------------------------------------------

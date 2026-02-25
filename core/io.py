@@ -143,6 +143,79 @@ def _tiff_to_rgb(path: Path) -> np.ndarray:
     return _axes_to_rgb(data, axes)
 
 
+def get_channel_info(path: Path) -> tuple[int, list[str]]:
+    """Return ``(channel_count, default_channel_names)`` for an image file.
+
+    For TIFF/OME-TIFF files the C axis is inspected via tifffile so that
+    multi-channel fluorescence images are detected correctly.
+    All other formats return ``(1, ["Ch 0"])``.
+    """
+    if path.suffix.lower() not in (".tif", ".tiff", ".btf"):
+        return 1, ["Ch 0"]
+    try:
+        import tifffile  # type: ignore
+
+        with tifffile.TiffFile(str(path)) as tif:
+            if tif.series:
+                series = tif.series[0]
+                axes = series.axes.upper()
+                shape = series.shape
+            else:
+                data = tif.asarray()
+                ndim = data.ndim
+                if ndim == 2:
+                    return 1, ["Ch 0"]
+                elif ndim == 3 and data.shape[2] in (1, 3, 4):
+                    axes, shape = "YXC", data.shape
+                elif ndim == 3:
+                    axes, shape = "CYX", data.shape
+                else:
+                    return 1, ["Ch 0"]
+            if "C" in axes:
+                n = shape[axes.index("C")]
+                return n, [f"Ch {i}" for i in range(n)]
+    except Exception as exc:
+        logger.warning("get_channel_info failed for %s: %s", path, exc)
+    return 1, ["Ch 0"]
+
+
+def _extract_channel_as_gray(
+    data: np.ndarray, axes: str, channel_idx: int
+) -> np.ndarray:
+    """Extract one channel plane from an ND array and return a 2-D (YX) array."""
+    axes = axes.upper()
+    for dim in ("T", "Z"):
+        while dim in axes:
+            idx = axes.index(dim)
+            data = np.take(data, 0, axis=idx)
+            axes = axes[:idx] + axes[idx + 1:]
+    if "C" in axes:
+        c_ax = axes.index("C")
+        c_idx = min(channel_idx, data.shape[c_ax] - 1)
+        data = np.take(data, c_idx, axis=c_ax)
+        axes = axes[:c_ax] + axes[c_ax + 1:]
+    if "S" in axes:
+        s_ax = axes.index("S")
+        data = np.take(data, 0, axis=s_ax)
+        axes = axes[:s_ax] + axes[s_ax + 1:]
+    data = np.squeeze(data)
+    if data.ndim > 2:
+        data = data[0] if data.shape[0] <= data.shape[-1] else data[..., 0]
+    return data
+
+
+def _normalize_to_uint8(
+    data: np.ndarray, low_pct: float = 1.0, high_pct: float = 99.0
+) -> np.ndarray:
+    """Percentile-stretch an array to uint8 [0–255]."""
+    data = data.astype(np.float32)
+    lo = float(np.percentile(data, low_pct))
+    hi = float(np.percentile(data, high_pct))
+    if hi > lo:
+        return np.clip((data - lo) / (hi - lo) * 255.0, 0.0, 255.0).astype(np.uint8)
+    return np.zeros(data.shape, dtype=np.uint8)
+
+
 def _probe_image(path: Path) -> tuple[int, int, float]:
     """Return (width, height, mpp).  mpp is 0 if unknown."""
     try:
@@ -199,6 +272,8 @@ def save_upload(file_bytes: bytes, original_name: str) -> FileEntry:
     else:
         w, h, mpp = _probe_image(dest_path)
 
+    channel_count, channel_names_default = get_channel_info(dest_path)
+
     return FileEntry(
         file_id=file_id,
         original_name=original_name,
@@ -210,6 +285,8 @@ def save_upload(file_bytes: bytes, original_name: str) -> FileEntry:
         width=w,
         height=h,
         mpp=mpp,
+        channel_count=channel_count,
+        channel_names=channel_names_default if channel_count > 1 else [],
     )
 
 
@@ -255,6 +332,58 @@ def make_thumbnail(entry: FileEntry, max_size: int = 512) -> Image.Image | None:
     """Return a PIL thumbnail for display, or None on failure."""
     img, _ = make_thumbnail_with_error(entry, max_size=max_size)
     return img
+
+
+def make_channel_thumbnail(
+    entry: FileEntry,
+    channel_idx: int = 0,
+    max_size: int = 512,
+    low_pct: float = 1.0,
+    high_pct: float = 99.0,
+) -> tuple[Image.Image | None, str | None]:
+    """Return a grayscale-RGB thumbnail for a single channel of a TIFF image.
+
+    Each channel is normalized with a percentile stretch (default 1–99 %).
+    The result is a three-channel (H × W × 3) grayscale-RGB PIL Image so that
+    Streamlit can display it without forced colorization.
+
+    For non-TIFF files or single-channel images this falls back to
+    ``make_thumbnail_with_error``.
+    """
+    path = entry.stored_path
+    if path.suffix.lower() not in (".tif", ".tiff", ".btf") or entry.is_wsi:
+        return make_thumbnail_with_error(entry, max_size=max_size)
+    try:
+        import tifffile  # type: ignore
+
+        with tifffile.TiffFile(str(path)) as tif:
+            if tif.series:
+                series = tif.series[0]
+                axes = series.axes.upper()
+                data = series.asarray()
+            else:
+                data = tif.asarray()
+                ndim = data.ndim
+                if ndim == 2:
+                    axes = "YX"
+                elif ndim == 3 and data.shape[2] in (1, 3, 4):
+                    axes = "YXC"
+                elif ndim == 3:
+                    axes = "CYX"
+                else:
+                    axes = "YX"
+        ch = _extract_channel_as_gray(data, axes, channel_idx)
+        ch = _normalize_to_uint8(ch, low_pct, high_pct)
+        rgb = np.stack([ch, ch, ch], axis=-1)
+        img = Image.fromarray(rgb)
+        img.thumbnail((max_size, max_size), Image.LANCZOS)
+        return img, None
+    except Exception as exc:
+        exc_str = str(exc)
+        logger.warning(
+            "make_channel_thumbnail failed for %s ch%d: %s", path, channel_idx, exc_str
+        )
+        return None, f"Channel thumbnail failed: {exc_str}"
 
 
 def read_region(entry: FileEntry, x: int, y: int, width: int, height: int,
